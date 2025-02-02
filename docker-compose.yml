@@ -1,0 +1,22 @@
+version: '3.9'
+
+services:
+  backend:
+    # Build the Docker image using the Dockerfile in the current directory (context: ./)
+    build:
+      context: .
+      dockerfile: Dockerfile   # Explicitly define the Dockerfile to use (optional if it's named Dockerfile)
+    container_name: top-50-react-backend  # Name of the container
+    ports:
+      - "5000:5000"  # Expose port 5000 on the container and map it to port 3000 on your host machine
+    environment:
+      - NODE_ENV=production  # Set environment variables for the container (optional)
+    volumes:
+      - .:/usr/src/app  # Mount the current directory (.) to the container's app directory
+    networks:
+      - app-network  # Define the network that this service will connect to
+
+# Define networks used by the services
+networks:
+  app-network:
+    driver: bridge  # Default network driver, creates a bridge network

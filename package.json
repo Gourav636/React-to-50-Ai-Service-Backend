@@ -1,0 +1,23 @@
+{
+  "name": "ai-service-backend",
+  "version": "1.0.0",
+  "main": "chatapp.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3",
+    "@azure/storage-blob": "^12.26.0",
+    "azure-storage": "^2.10.7",
+    "claudia-api-builder": "^4.1.2",
+    "compression": "^1.7.5",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0"
+  }
+}
