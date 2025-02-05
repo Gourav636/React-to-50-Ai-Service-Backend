@@ -159,7 +159,7 @@ app.get("/get-images", async (req, res) => {
     let blobCount = 0;
 
     for await (const blob of containerClient.listBlobsFlat()) {
-      console.log(`Found blob: ${blob.name}`); // Log the name of each blob for debugging
+      console.log(`Found blob: ${blob.name}`);
       blobCount++;
 
       console.log(`Blob details:`, blob);
@@ -171,7 +171,7 @@ app.get("/get-images", async (req, res) => {
 
         const sasToken = await blobClient.generateSasUrl({
           permissions: "r",
-          expiresOn: new Date(new Date().valueOf() + 3600 * 1000), // Expires in 1 hour
+          expiresOn: new Date(new Date().valueOf() + 3600 * 1000),
         });
 
         imageUrls.push(sasToken);
