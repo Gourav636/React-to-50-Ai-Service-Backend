@@ -5,13 +5,11 @@ const compression = require("compression");
 const rateLimit = require("express-rate-limit");
 const { Anthropic } = require("@anthropic-ai/sdk");
 const { HttpsProxyAgent } = require("https-proxy-agent");
-const dns = require("dns");
+
 const {
   BlobServiceClient,
   StorageSharedKeyCredential,
 } = require("@azure/storage-blob");
-
-dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 const requiredEnvVars = [
   "ANTHROPIC_API_KEY",
@@ -29,7 +27,7 @@ requiredEnvVars.forEach((key) => {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 app.use(compression());
 
@@ -41,7 +39,7 @@ app.use(limiter);
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
-  baseURL: "https://52.152.96.252",
+  baseURL: "https://api.anthropic.com/v1/messages",
   httpAgent: new HttpsProxyAgent("http://rb-proxy-in.bosch.com:8080"),
   timeout: 60000,
 });
@@ -87,15 +85,22 @@ app.get("/test-api", async (req, res) => {
   try {
     const startTime = Date.now();
     console.log("Calling Anthropic API for test...");
+
     const message = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 10,
+      model: "claude-3.5-sonnet",
+      max_tokens: 50,
       messages: [{ role: "user", content: "test" }],
     });
 
     const responseTime = Date.now() - startTime;
-    console.log("API Response: ", message.content);
-    res.json({ status: "success", responseTime, content: message.content });
+    console.log("API Response: ", message.content.join(" "));
+
+    res.setHeader("Content-Type", "application/json");
+    res.json({
+      status: "success",
+      responseTime,
+      content: message.content.join(" "),
+    });
   } catch (error) {
     console.error("Error during /test-api:", error);
     res.status(500).json({
