@@ -2,6 +2,9 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const compression = require("compression");
+const axios = require("axios");
+const fs = require("fs");
+const multer = require("multer");
 const rateLimit = require("express-rate-limit");
 const { Anthropic } = require("@anthropic-ai/sdk");
 const { HttpsProxyAgent } = require("https-proxy-agent");
@@ -26,6 +29,7 @@ requiredEnvVars.forEach((key) => {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const upload = multer({ dest: "uploads/" });
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
@@ -71,7 +75,6 @@ async function generateSasUrl(blobName) {
 
 const validateRequest = (req, res, next) => {
   const { prompt } = req.body;
-  console.log("Validating request: ", req.body);
 
   if (typeof prompt !== "string" || prompt.trim().length === 0) {
     console.error("Invalid prompt format:", req.body);
@@ -84,7 +87,6 @@ const validateRequest = (req, res, next) => {
 app.get("/test-api", async (req, res) => {
   try {
     const startTime = Date.now();
-    console.log("Calling Anthropic API for test...");
 
     const message = await anthropic.messages.create({
       model: "claude-3.5-sonnet",
@@ -93,7 +95,6 @@ app.get("/test-api", async (req, res) => {
     });
 
     const responseTime = Date.now() - startTime;
-    console.log("API Response: ", message.content.join(" "));
 
     res.setHeader("Content-Type", "application/json");
     res.json({
@@ -115,17 +116,14 @@ app.get("/test-api", async (req, res) => {
 app.post("/ask", validateRequest, async (req, res) => {
   const { prompt } = req.body;
   const startTime = Date.now();
-  console.log("Received prompt:", prompt);
 
   try {
-    console.log("Calling Anthropic API for user prompt...");
     const message = await anthropic.messages.create({
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: prompt }],
     });
 
-    console.log("API Response: ", message.content);
     return res.json({ response: message.content });
   } catch (error) {
     console.error("Error during /ask:", error);
@@ -139,7 +137,6 @@ app.post("/ask", validateRequest, async (req, res) => {
 app.get("/generate-sas-url/:blobName", async (req, res) => {
   try {
     const { blobName } = req.params;
-    console.log("Generating SAS URL for blob:", blobName);
     const containerClient = blobServiceClient.getContainerClient(containerName);
     const blobClient = containerClient.getBlobClient(blobName);
 
@@ -148,7 +145,6 @@ app.get("/generate-sas-url/:blobName", async (req, res) => {
       expiresOn: new Date(new Date().valueOf() + 3600 * 1000),
     });
 
-    console.log("Generated SAS URL:", sasToken);
     res.json({ sasUrl: sasToken });
   } catch (error) {
     console.error("Error during /generate-sas-url:", error);
@@ -158,13 +154,11 @@ app.get("/generate-sas-url/:blobName", async (req, res) => {
 
 app.get("/get-images", async (req, res) => {
   try {
-    console.log("Fetching image URLs...");
     const containerClient = blobServiceClient.getContainerClient(containerName);
     let imageUrls = [];
     let blobCount = 0;
 
     for await (const blob of containerClient.listBlobsFlat()) {
-      console.log(`Found blob: ${blob.name}`);
       blobCount++;
 
       console.log(`Blob details:`, blob);
@@ -197,6 +191,118 @@ app.get("/get-images", async (req, res) => {
   } catch (error) {
     console.error("Error during /get-images:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/extract-text", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No image file uploaded." });
+    }
+
+    const imagePath = req.file.path;
+    const imageBuffer = fs.readFileSync(imagePath);
+
+    // Call Azure Computer Vision API for OCR
+    const visionResponse = await axios.post(
+      `${process.env.AZURE_VISION_ENDPOINT}/vision/v3.2/ocr?language=unk&detectOrientation=true`,
+      imageBuffer,
+      {
+        headers: {
+          "Ocp-Apim-Subscription-Key": process.env.AZURE_VISION_KEY,
+          "Content-Type": "application/octet-stream",
+        },
+      }
+    );
+
+    // 🛠 FIX: Convert response to a string and find the JSON part
+    const rawResponse = visionResponse.data.toString();
+    const jsonStartIndex = rawResponse.indexOf("{"); // Find where JSON starts
+    const jsonString = rawResponse.substring(jsonStartIndex); // Extract JSON
+    const visionData = JSON.parse(jsonString); // Parse JSON
+
+    // ✅ Ensure response has text data
+    if (
+      !visionData ||
+      !visionData.regions ||
+      !Array.isArray(visionData.regions)
+    ) {
+      console.error("Invalid Vision API response.");
+      return res
+        ?.status(500)
+        .json({ error: "Invalid response from Vision API." });
+    }
+
+    // ✅ Extract text
+    let extractedText = "";
+    visionData.regions.forEach((region) => {
+      region.lines.forEach((line) => {
+        extractedText += line.words.map((word) => word.text).join(" ") + " ";
+      });
+    });
+
+    extractedText = extractedText.trim();
+
+    if (!extractedText) {
+      throw new Error("No text extracted from the image.");
+    }
+
+    // Call Azure Translator API
+    const translationResponse = await axios.post(
+      `${process.env.AZURE_TRANSLATOR_ENDPOINT}/translate?api-version=3.0&to=en`,
+      [{ text: extractedText }],
+      {
+        headers: {
+          "Ocp-Apim-Subscription-Key": process.env.AZURE_TRANSLATOR_KEY,
+          "Ocp-Apim-Subscription-Region": "eastus",
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    let rawResponseData = translationResponse.data.toString();
+
+    // Extract the JSON part of the response by finding the first '[' character
+    const jsonStart = rawResponseData.indexOf("[");
+    if (jsonStart === -1) {
+      throw new Error("No JSON found in the response.");
+    }
+
+    const jsonStringData = rawResponseData.slice(jsonStart).trim(); // Remove extra spaces or newlines
+    const jsonEndIndex = jsonStringData.lastIndexOf("]") + 1;
+    const cleanJsonString = jsonStringData.substring(0, jsonEndIndex);
+
+    // Parse the extracted JSON
+    const translateData = JSON.parse(cleanJsonString);
+    // Check if response contains valid translation
+    if (
+      !translateData ||
+      !Array.isArray(translateData) ||
+      translateData.length === 0
+    ) {
+      throw new Error("Invalid or empty response from Azure Translator API.");
+    }
+
+    const firstTranslation = translateData[0]?.translations?.[0];
+
+    if (!firstTranslation || !firstTranslation.text) {
+      throw new Error("Translation response does not contain text.");
+    }
+
+    const translatedText = firstTranslation.text;
+
+    // Delete the uploaded image after processing
+    fs.unlinkSync(imagePath);
+
+    res.json({ extractedText, translatedText });
+  } catch (error) {
+    console.error(
+      "Error processing request:",
+      error.response?.data || error.message
+    );
+    res
+      .status(500)
+      .json({ error: "An error occurred while processing the image." });
   }
 });
 
